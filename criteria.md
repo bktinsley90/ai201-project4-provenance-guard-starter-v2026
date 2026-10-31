@@ -44,61 +44,65 @@ Two things worth knowing before you pick numbers:
 ---
 ## 1.
 
-<!-- Your criterion. It must name a number. -->
-
-
+In each of three evaluation runs, no more than 1 of 10 pieces of my own writing
+will receive the high-confidence AI label.
 
 **Why this target:**
 
-
+False accusations are more harmful to writers than missed detections are to
+the site, so I would rather send borderline writing to "unsure" than label
+more than 1 in 10 of my own pieces as AI.
 
 ---
 
 ## 2.
 
-<!-- Your criterion. -->
-
-
+In each of three runs, the average combined score for five confidently
+AI-generated samples will be at least 0.15 higher than the average score for
+five pieces of my own writing.
 
 **Why this target:**
 
-
+A 0.15 gap is a modest, measurable separation on the 0-to-1 scale, without
+claiming the detector can perfectly distinguish every individual text.
 
 ---
 
 ## 3.
 
-<!-- Your criterion. -->
-
-
+In each of three runs, at least one test submission will receive each of the
+three labels: high-confidence human, unsure, and high-confidence AI.
 
 **Why this target:**
 
-
+Every label needs to be reachable for the scoring bands to be useful; including
+an unsure outcome also gives uncertain cases a path that is not an accusation.
 
 ---
 
 ## 4.
 
-<!-- Your criterion. -->
-
-
+For 3 out of 3 valid appeals against existing submissions, the appeal will be
+recorded with its content ID and reasoning, the item's status will become
+`under_review`, and the original decision will remain in the audit log.
 
 **Why this target:**
 
-
-
----
+An appeal must reliably create a review trail without erasing the decision
+being contested; requiring all three checks makes both the status change and
+the audit history observable.
 
 ## 5.
 
-<!-- Your criterion. -->
-
-
+All 4 malformed submission cases I test (missing `text`, empty `text`, null
+`text`, and non-string `text`) will receive a 4xx response and will not create
+a detection decision.
 
 **Why this target:**
 
-
+These common invalid requests should fail clearly instead of being scored as
+real submissions; 4xx responses and the absence of a decision are both
+straightforward to verify.
 
 ---
 
