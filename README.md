@@ -121,14 +121,24 @@
      two off the response, so leaving them out costs you next unit's
      diagnostics. -->
 
+Port 5000 was already in use during this run, so the service was started on
+port 5001.
+
 ```bash
-$ curl -X POST http://127.0.0.1:5000/submit \
+$ curl -X POST http://127.0.0.1:5001/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d '{"text":"The history of a city can be read in its streets, buildings, and public spaces. Each generation leaves traces of its needs and ambitions. Looking closely at these details helps explain how communities change over time.","creator_id":"sample-writer"}'
 ```
 
 ```json
-
+{
+  "confidence": 0.0,
+  "content_id": "634f4897-44d7-4ed6-bbe0-9955dc5c0fb1",
+  "guess": "unsure",
+  "label": "Milestone 3 placeholder — confidence and label not yet calculated.",
+  "model_score": 0.6359,
+  "style_score": 0.0
+}
 ```
 
 **An appeal**
@@ -146,11 +156,26 @@ $ curl -X POST http://127.0.0.1:5000/appeal \
 **What the log shows afterwards**
 
 ```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
+$ curl "http://127.0.0.1:5001/log?limit=3"
 ```
 
 ```json
-
+{
+  "count": 1,
+  "entries": [
+    {
+      "combined_score": null,
+      "content_id": "634f4897-44d7-4ed6-bbe0-9955dc5c0fb1",
+      "creator_id": "sample-writer",
+      "guess": "unsure",
+      "label": null,
+      "model_score": 0.6359,
+      "status": "decided",
+      "style_score": null,
+      "timestamp": "2026-10-31T23:57:19+00:00"
+    }
+  ]
+}
 ```
 
 ---
