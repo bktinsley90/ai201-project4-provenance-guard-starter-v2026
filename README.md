@@ -29,10 +29,21 @@
 
 ## What This Does
 
-<!-- The path a submission takes, from arriving to the label a reader sees.
-     Six or seven steps — this is the trace you wrote in Milestone 1. -->
-
-
+1. A writer sends `text` and `creator_id` as JSON to `POST /submit`.
+2. The service assigns a unique `content_id` so this submission can be found
+   later if the writer appeals.
+3. The model signal measures how predictable the text is to GPT-2; the style
+   signal measures sentence-length variation, vocabulary repetition, and
+   punctuation density.
+4. `scoring.py::combine_signals` calculates the equal-weight average of those
+   two 0–1 scores.
+5. `scoring.py::score_to_label` maps the combined score to human (0.00–0.35),
+   unsure (above 0.35 and below 0.65), or AI (0.65–1.00).
+6. The service appends the scores, label, content ID, creator ID, and
+   `decided` status to `logs/audit.jsonl`, then returns the result as JSON.
+7. If the writer appeals, `POST /appeal` checks the content ID, records their
+   reasoning as a new `under_review` event beside the original decision, and
+   confirms the appeal. `GET /log` lets someone inspect the audit trail.
 
 ---
 
@@ -46,11 +57,22 @@
 
 ### Signal one — the model signal
 
-**What it measures:**
+**What it measures:** GPT-2's perplexity for the text: how predictable each
+next token is to the model. The detector maps perplexity to a 0–1 score, with
+lower perplexity producing a higher score (more AI-like). In this project,
+perplexity 45 maps to 0.5; the calculation uses text truncated to at most 400
+tokens.
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** Language models tend
+to produce likely, conventional next words, so generated text may be easier
+for GPT-2 to predict. Human writing can include unexpected details, unusual
+word choices, and abrupt shifts that raise perplexity.
 
-**What it can't see:**
+**What it can't see:** Predictability does not prove who wrote a passage.
+Plain, conventional writing—including writing by a second-language learner or
+someone choosing simple wording—can look AI-like, while unusual or ornate
+generated text can look human-like. The score also does not understand meaning
+or authorship, and text beyond the 400-token limit is not considered.
 
 ### Signal two — the style signal
 
@@ -221,15 +243,26 @@ $ curl "http://127.0.0.1:5001/log?limit=5"
 
 **Moment 1**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* Help filling in `sentence_length_spread`,
+  `type_token_ratio`, and `punctuation_density` in `stylometry.py`.
+- *What came back:* Implementations based on normalized sentence-length
+  variation, unique words divided by total words, and punctuation characters
+  divided by total characters.
+- *What I changed:* I handled short or empty inputs explicitly, counted
+  Unicode punctuation, and used the three normalized measures to build the
+  style score. I tested representative inputs and documented the limitations
+  of these heuristics.
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* Help writing the combining rule in
+  `scoring.py::combine_signals` and deciding what should happen when the two
+  signals disagree.
+- *What came back:* An equal-weight average so conflicting scores move toward
+  the unsure range instead of letting either signal dominate.
+- *What I changed:* I kept weights configurable in `config.py`, normalized by
+  their total in the implementation, and documented that a 0.90/0.10 split
+  returns 0.50. I checked the rule with equal and unequal weights.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
