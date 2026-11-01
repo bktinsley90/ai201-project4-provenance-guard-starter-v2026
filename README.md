@@ -25,13 +25,6 @@
 
 ---
 
-<!-- ─────────────────────────────────────────────────────────────────────────
-     Unit 7 asks for the first five sections. Unit 8 adds the five below.
-
-     Everything is pasted as TEXT. A pasted curl response gets full credit;
-     a picture of your terminal gets none.
-     ───────────────────────────────────────────────────────────────────────── -->
-
 <!-- ═══════════════════════ UNIT 7 — THE BUILD ═══════════════════════ -->
 
 ## What This Does
@@ -61,27 +54,47 @@
 
 ### Signal two — the style signal
 
-**What it measures:**
+**What it measures:** It equally averages sentence regularity, vocabulary
+repetition, and punctuation density. Sentence regularity is
+`1 / (1 + sentence_length_spread)`; vocabulary repetition is
+`1 - type_token_ratio`; punctuation density is used as measured. Each feature
+is on a 0-to-1 scale, and higher values are treated as more AI-like. If a
+measure is unavailable because there are no words or fewer than two
+sentences, that feature contributes a neutral 0.5.
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** This heuristic treats
+even sentence lengths and repeated vocabulary as more machine-like. It also
+assumes denser punctuation is more machine-like; punctuation density alone
+does not establish authorship.
 
-**What it can't see:**
+**What it can't see:** It cannot understand meaning or distinguish deliberate
+style from authorship. Vocabulary ratio depends on text length, and short
+samples provide little sentence-length evidence. Editing punctuation or
+sentence breaks can also change the score without changing who wrote the text.
 
 ### The combining rule
 
 <!-- Write the rule in words, then give the numbers. What happens when the two
      signals disagree? -->
 
-**The rule:**
+**The rule:** I use a weighted average of the model and style scores. When
+they disagree, the average moves toward the unsure band; a split of 0.90 and
+0.10 produces 0.50, which is unsure rather than an accusation.
 
-**The numbers:**
+**The numbers:** model weight 0.50, style weight 0.50. The high-confidence
+human threshold is 0.35 and the high-confidence AI threshold is 0.65; scores
+between them are unsure.
 
 **Where it lives:** `scoring.py::combine_signals`
 
 <!-- ⚠️ The grader checks your code against that line. If your rule lives
      somewhere else, say where. -->
 
-**A case where my two signals split, and what my rule does with it:**
+**A case where my two signals split, and what my rule does with it:** If the
+model signal is 0.90 and the style signal is 0.10, the equal-weight average is
+0.50, so the result is unsure. This favors avoiding a false accusation when
+the signals conflict, while accepting that some AI writing may also land in
+the unsure band.
 
 
 

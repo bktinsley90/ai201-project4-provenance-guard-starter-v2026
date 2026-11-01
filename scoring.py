@@ -21,7 +21,7 @@ import config
 
 def combine_signals(model_score: float, style_score: float) -> float:
     """
-    Combine two 0–1 signals into one 0–1 score. ← TODO (Milestone 4)
+    Combine two 0–1 signals using their configured weighted average.
 
     Both inputs point the same way: higher means more likely AI. Your output
     should too.
@@ -33,30 +33,15 @@ def combine_signals(model_score: float, style_score: float) -> float:
     Returns:
         A float from 0.0 (confidently human) to 1.0 (confidently AI).
 
-    ⚠️ **Write the rule down before you code it, and put the numbers in your
-    README.** A weighted average is the obvious choice and it is not the only
-    one. Things worth thinking about:
-
-      - **What happens when they disagree?** One signal at 0.9 and the other at
-        0.1 averages to 0.5 — "unsure". Is that what you want? It might be
-        exactly right: two methods disagreeing IS uncertainty. Or you might
-        decide one signal is more trustworthy when they split.
-
-      - **Which way do you want to be wrong?** Weighting toward the signal that
-        reads more human means fewer false accusations and more AI text
-        getting through. There's no weighting that avoids the trade.
-
-      - Milestone 4 asks you to find a case where your two signals split and
-        write it down. That case is what this rule exists to handle.
-
-    The weights in config.py are placeholders. Change them, or ignore them and
-    write a different rule.
+    When the signals disagree, the weighted average falls between them. With
+    the configured equal weights, a split of 0.9 and 0.1 returns 0.5, which
+    falls in the unsure band rather than making a high-confidence accusation.
     """
-    # TODO: replace this
+    total_weight = config.WEIGHT_MODEL_SIGNAL + config.WEIGHT_STYLE_SIGNAL
     return (
         config.WEIGHT_MODEL_SIGNAL * model_score
         + config.WEIGHT_STYLE_SIGNAL * style_score
-    )
+    ) / total_weight
 
 
 def score_to_label(score: float) -> tuple[str, str]:

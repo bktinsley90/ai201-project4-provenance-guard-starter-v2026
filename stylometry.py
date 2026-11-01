@@ -32,6 +32,7 @@ anything together:
 
 import re
 import statistics
+import unicodedata
 
 
 def sentences(text: str) -> list[str]:
@@ -49,28 +50,25 @@ def words(text: str) -> list[str]:
 
 def sentence_length_spread(text: str) -> float:
     """
-    How much sentence length varies. ← TODO
+    The sample standard deviation of sentence word counts divided by their mean.
 
     Returns:
-        A float. Decide yourself what scale it's on and which direction means
-        "more human" — then write that down, because your combining rule
-        depends on knowing it.
-
-    A hint on what you're reaching for: the standard deviation of sentence
-    lengths, probably divided by the mean so a long text and a short one are
-    comparable. `statistics.stdev` is imported for you.
-
-    Watch the edge case: a one-sentence submission has no spread at all, and
-    `stdev` raises on fewer than two values. Decide what that should return
-    before the attack set decides for you.
+        A nonnegative coefficient of variation. Higher means sentence lengths
+        vary more; fewer than two sentences returns 0.0.
     """
-    # TODO: replace this
-    return 0.0
+    sentence_word_counts = [len(words(sentence)) for sentence in sentences(text)]
+    if len(sentence_word_counts) < 2:
+        return 0.0
+
+    mean_length = statistics.mean(sentence_word_counts)
+    if mean_length == 0:
+        return 0.0
+    return statistics.stdev(sentence_word_counts) / mean_length
 
 
 def type_token_ratio(text: str) -> float:
     """
-    Unique words over total words. ← TODO
+    Unique normalized words divided by total normalized words.
 
     Returns:
         A float between 0 and 1. Higher means more varied vocabulary.
@@ -80,50 +78,58 @@ def type_token_ratio(text: str) -> float:
     directly comparable on it, and if your test inputs vary a lot in length,
     that alone can look like a signal.
     """
-    # TODO: replace this
-    return 0.0
+    tokens = words(text)
+    if not tokens:
+        return 0.0
+    return len(set(tokens)) / len(tokens)
 
 
 def punctuation_density(text: str) -> float:
     """
-    How much punctuation, relative to length. ← TODO
+    Unicode punctuation characters divided by the total number of characters.
 
     Returns:
-        A float. Whether you count all punctuation or only some kinds — commas,
-        semicolons, dashes — is a real choice. Semicolons and em dashes are
-        more interesting than full stops, because they vary more between
-        writers.
+        A float from 0.0 to 1.0; empty text returns 0.0.
     """
-    # TODO: replace this
-    return 0.0
+    if not text:
+        return 0.0
+
+    punctuation_count = sum(
+        1 for character in text
+        if unicodedata.category(character).startswith("P")
+    )
+    return punctuation_count / len(text)
 
 
 # ── Combining them ───────────────────────────────────────────────────────────
 
 def style_signal(text: str) -> float:
     """
-    The style signal as a 0–1 score. **Higher means more likely AI.** ← TODO
+    Combine the style measures into a 0–1 score; higher means more likely AI.
 
-    Combine your three measures into one number. Same direction as
-    `detector.model_signal`, so that `scoring.combine_signals` can treat them
-    the same way — if one of your signals runs backwards, everything above it
-    is wrong in a way that's hard to see.
-
-    Two things to decide and write down:
-
-      1. Which direction each measure points. Low spread means more AI-ish, so
-         it needs flipping. Work out which of your three need that.
-      2. How to get each onto a comparable scale. A raw type-token ratio sits
-         between 0 and 1; a raw punctuation count doesn't. Adding them
-         unscaled means whichever has the bigger numbers wins by default.
+    The three normalized features are equally averaged: inverse coefficient
+    of variation for sentence lengths, inverse type-token ratio, and
+    punctuation density. Missing evidence contributes a neutral 0.5 for that
+    feature. This is a simple heuristic, not a calibrated authorship test.
 
     Test it on the four calibration inputs from Milestone 4 — clearly AI,
     clearly human, plain conventional human writing, lightly-edited AI — before
     you trust it. Plain and ordinary, not formal: formal prose reads as *human*
     to signal one, and it is plain writing that gets accused.
     """
-    # TODO: replace this
-    return 0.5
+    tokens = words(text)
+    if not tokens:
+        return 0.5
+
+    sentence_count = len(sentences(text))
+    spread = sentence_length_spread(text)
+    sentence_regularity = (
+        1.0 / (1.0 + spread) if sentence_count >= 2 else 0.5
+    )
+    vocabulary_repetition = 1.0 - type_token_ratio(text)
+    punctuation = punctuation_density(text)
+
+    return (sentence_regularity + vocabulary_repetition + punctuation) / 3.0
 
 
 if __name__ == "__main__":
@@ -139,4 +145,4 @@ if __name__ == "__main__":
     print(f"type_token_ratio         {type_token_ratio(text)}")
     print(f"punctuation_density      {punctuation_density(text)}")
     print(f"style_signal             {style_signal(text)}   (higher = more likely AI)")
-    print("\nAll zeros? These are stubs — Milestone 4 is where you build them.")
+    print("\nThese simple style measures are heuristics, not authorship proof.")
