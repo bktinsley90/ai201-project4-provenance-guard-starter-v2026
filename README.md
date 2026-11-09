@@ -586,16 +586,42 @@ score and risking another server error.
 
 ## What's Still Broken
 
-<!-- For each attack still getting through and each criterion still missed:
-     what you'd do, and why you stopped. -->
+**Nine evasion attacks and three prompt-injection attacks still BROKE.** The
+main pattern is that ordinary text signals can be moved by edits or by
+instruction-like text included in the submission. **Stages: signal one,
+signal two, and the combining rule.** Typos, unusual wording, sentence
+structure, and human-sounding additions shift the two signal scores; averaging
+them can leave AI-targeted text in the human or unsure band. PI01 and PI02
+were labeled human, while PI03 was unsure. I stopped short of changing the
+weights or thresholds because the score-spread criterion was rate-limited and
+could not establish how such a change would affect the target averages.
 
+The route now avoids 5xx responses for the malformed attack set, but it still
+accepts some unusual inputs with 200 responses: control characters,
+punctuation-only text, right-to-left text, very long text, and a missing
+`creator_id`. MF07 (right-to-left text) was labeled AI. That input does not
+prove the text was human-written, but it shows the detector can make a strong
+claim on text whose language or content may not be represented well by its
+signals. **Stages: route validation and both signals.** I would next define a
+maximum text length and decide which non-linguistic inputs should be rejected
+or marked unsure, then test those policies.
+
+Two criteria still lack evidence: criterion 2's score comparison returned
+429 for all samples in both groups, and criterion 4's appeals were not run.
+Criterion 1 and label coverage passed in the after evaluation; all four
+criterion-5 inputs returned 400. I stopped rather than infer scores from
+rate-limited requests or claim the appeal flow worked without testing it.
 
 
 **The trade I'd make if this ran for real:**
 
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
-
+I would prioritize avoiding false accusations: raise the AI threshold (for
+example, from 0.65 to 0.75) and send more borderline or unfamiliar-language
+text to `unsure` instead of labeling it AI. Writers would pay with more
+inconclusive results, while the site would pay with more AI-written
+submissions passing without a high-confidence AI label; I would validate that
+trade with a rate-limit-safe score-spread run before shipping the threshold
+change.
 
 
 <!-- ═════════════════════════════════════════════════════════════════════
