@@ -348,21 +348,55 @@ signal, though the final result was `unsure` rather than an AI accusation.
 
 ## Run Log and Verdicts
 
-<!-- Your five criteria across three trials. `run_eval.py --label before`. -->
+<!-- Selected report: results/run_2026-11-08_1951_before.md -->
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |
+| 1. Own writing | At most 1 of 10 gets the high-confidence AI label in each run | 10/10 returned 403; no labels | 10/10 returned 403; no labels | 10/10 returned 403; no labels | UNMEASURABLE |
+| 2. Score spread | AI-generated average is at least 0.15 above own-writing average | All 10 returned 403; no scores | All 10 returned 403; no scores | All 10 returned 403; no scores | UNMEASURABLE |
+| 3. Label coverage | Each run reaches human, unsure, and AI labels | 3/3 returned 403; no guesses | 3/3 returned 403; no guesses | 3/3 returned 403; no guesses | UNMEASURABLE |
+| 4. Appeal path | 3/3 appeals are logged and set status to `under_review` | Not tested by `run_eval.py` | Not tested by `run_eval.py` | Not tested by `run_eval.py` | NOT RUN |
+| 5. Malformed input | All 4 cases return 4xx and create no detection decision | 4/4 returned 403; decision logging unverified | 4/4 returned 403; decision logging unverified | 4/4 returned 403; decision logging unverified | INCONCLUSIVE |
 
-**Real output from one trial**, pasted as text, naming the file and function
-that produced it:
+Selected report: `results/run_2026-11-08_1951_before.md`, produced by
+`run_eval.py::main`. All 81 requests in this report returned 403, including
+valid submissions. The run did not produce detector scores or guesses, so the
+scoring criteria cannot be assessed from these results. The malformed cases
+did receive 4xx responses, but the report does not verify whether a detection
+decision was written.
+
+**Real output from one trial** — label coverage, Trial 1:
 
 ```json
-
+[
+  {
+    "status": 403,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "Went for a run. Legs hurt. Worth it."
+  },
+  {
+    "status": 403,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "We got to the campsite about four. The pitch was fine, a bit sloped, b"
+  },
+  {
+    "status": 403,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "The importance of effective communication in the workplace cannot be o"
+  }
+]
 ```
 
 **Diagnoses**
