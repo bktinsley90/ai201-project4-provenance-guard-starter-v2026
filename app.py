@@ -198,13 +198,58 @@ def submit():
       8. `scoring.score_to_label(...)` and put the real label in the response.
 
     ─────────────────────────────────────────────────────────────────────────
-    Worth deciding early, because unit 8's attack set will decide it for you:
-    what should this do when `text` is missing, empty, or enormous? A crash on
-    a malformed input is one of the most common real failures there is.
+    Invalid request bodies and text are rejected before either signal runs.
     """
-    payload = request.get_json(silent=True) or {}
-    text = payload.get("text", "")
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        audit.log_rejection(
+            creator_id="unknown",
+            reason="invalid_request",
+            field="body",
+        )
+        return jsonify({
+            "error": "invalid_request",
+            "message": "Request body must be a JSON object.",
+        }), 400
+
     creator_id = payload.get("creator_id", "unknown")
+    audit_creator_id = (
+        creator_id if isinstance(creator_id, str) and creator_id.strip()
+        else "unknown"
+    )
+    if not isinstance(creator_id, str) or not creator_id.strip():
+        audit.log_rejection(
+            creator_id=audit_creator_id,
+            reason="invalid_request",
+            field="creator_id",
+        )
+        return jsonify({
+            "error": "invalid_request",
+            "message": "creator_id must be a non-empty string when provided.",
+        }), 400
+
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        audit.log_rejection(
+            creator_id=audit_creator_id,
+            reason="invalid_request",
+            field="text",
+        )
+        return jsonify({
+            "error": "invalid_request",
+            "message": "text must be a non-empty string.",
+        }), 400
+    if len(text.split()) < 3:
+        audit.log_rejection(
+            creator_id=audit_creator_id,
+            reason="invalid_request",
+            field="text",
+        )
+        return jsonify({
+            "error": "invalid_request",
+            "message": "text must contain at least three words to score.",
+        }), 400
+
     content_id = str(uuid.uuid4())
     model_score = detector.model_signal(text)
     style_score = stylometry.style_signal(text)
