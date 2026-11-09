@@ -352,18 +352,18 @@ signal, though the final result was `unsure` rather than an AI accusation.
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1. Own writing | At most 1 of 10 gets the high-confidence AI label in each run | 10/10 returned 403; no labels | 10/10 returned 403; no labels | 10/10 returned 403; no labels | UNMEASURABLE |
-| 2. Score spread | AI-generated average is at least 0.15 above own-writing average | All 10 returned 403; no scores | All 10 returned 403; no scores | All 10 returned 403; no scores | UNMEASURABLE |
-| 3. Label coverage | Each run reaches human, unsure, and AI labels | 3/3 returned 403; no guesses | 3/3 returned 403; no guesses | 3/3 returned 403; no guesses | UNMEASURABLE |
-| 4. Appeal path | 3/3 appeals are logged and set status to `under_review` | Not tested by `run_eval.py` | Not tested by `run_eval.py` | Not tested by `run_eval.py` | NOT RUN |
-| 5. Malformed input | All 4 cases return 4xx and create no detection decision | 4/4 returned 403; decision logging unverified | 4/4 returned 403; decision logging unverified | 4/4 returned 403; decision logging unverified | INCONCLUSIVE |
+| 1. Own writing | At most 1 of 10 gets the high-confidence AI label in each run | 10/10 returned 403; no labels | 10/10 returned 403; no labels | 10/10 returned 403; no labels | MISSED |
+| 2. Score spread | AI-generated average is at least 0.15 above own-writing average | All 10 returned 403; no scores | All 10 returned 403; no scores | All 10 returned 403; no scores | MISSED |
+| 3. Label coverage | Each run reaches human, unsure, and AI labels | 3/3 returned 403; no guesses | 3/3 returned 403; no guesses | 3/3 returned 403; no guesses | MISSED |
+| 4. Appeal path | 3/3 appeals are logged and set status to `under_review` | Not tested by `run_eval.py` | Not tested by `run_eval.py` | Not tested by `run_eval.py` | MISSED |
+| 5. Malformed input | All 4 cases return 4xx and create no detection decision | 4/4 returned 403; no decision records found | 4/4 returned 403; no decision records found | 4/4 returned 403; no decision records found | MET |
 
 Selected report: `results/run_2026-11-08_1951_before.md`, produced by
 `run_eval.py::main`. All 81 requests in this report returned 403, including
 valid submissions. The run did not produce detector scores or guesses, so the
 scoring criteria cannot be assessed from these results. The malformed cases
-did receive 4xx responses, but the report does not verify whether a detection
-decision was written.
+did receive 4xx responses; I also checked the audit log and found no decision
+records for their evaluation creator IDs.
 
 **Real output from one trial** — label coverage, Trial 1:
 
@@ -401,21 +401,66 @@ decision was written.
 
 **Diagnoses**
 
-<!-- For each miss AND each broken attack: the stage and the mechanism.
+**Criterion verdicts**
 
-     Your service has five stages: the route, signal one, signal two, the
-     combining rule, and the label mapping.
+1. **MISSED** — The target requires labels for the ten pieces in every run.
+   All ten requests in each run returned 403, so none were scored and the
+   false-positive rate cannot be measured. **Stage: route/request boundary.**
+   **Mechanism:** requests were rejected before a decision was returned. The
+   reports do not identify which component generated the 403, so I cannot
+   diagnose that component more precisely.
+2. **MISSED** — There were no model, style, or combined scores in any of the
+   three runs, so the 0.15 average-score gap cannot be calculated.
+   **Stage: route/request boundary; mechanism:** the same 403 rejection
+   prevented the requests from reaching observable scoring output. This is not
+   evidence that either signal failed.
+3. **MISSED** — No run produced any guesses, so the three-label coverage target
+   was not demonstrated. **Stage: route/request boundary; mechanism:** all
+   three label-coverage requests were rejected with 403 before labels appeared.
+4. **MISSED (not run)** — `run_eval.py` sends submissions only; it does not
+   create and submit appeals. **Stage: evaluation harness, not one of the five
+   service stages. Mechanism:** the runner has no appeal request flow, so no
+   appeal trial was performed and there is no evidence about appeal routing,
+   status changes, or audit logging.
+5. **MET** — All four malformed cases returned 403 in each trial, and no
+   matching evaluation decision records appear in the audit log. That meets
+   the stated 4xx/no-decision target, though it does not show that the
+   application itself handled or validated the malformed bodies.
 
-     Not a diagnosis:  "The evasion attacks got through."
-     A diagnosis:      "Four evasion inputs got through. All four had typos
-                        added to AI-generated text. My second signal measures
-                        word variety, and typos raise word variety — so it read
-                        them as more human. My combining rule weights that
-                        signal at 0.6, so it dragged the whole score down."
+**Attack-run diagnoses — 23 BROKE**
 
-     Look for a pattern. Five failures on one signal is one problem, not five. -->
+- **Nine evasion attacks (EV01–EV09):** **Stages: signal one, signal two, and
+  the combining rule.** Five attacks manipulated surface style (typos, sentence
+  breaks, a quotation, sentence-length extremes, or punctuation); their style
+  scores were low and pulled the equal-weight combined score toward human or
+  unsure. EV04's unusual vocabulary and EV08's very short text lowered the
+  model score; EV05 changed both signals through editing. In EV09, the model
+  score was 0.7042 but the style score was 0.2861, bringing the combined score
+  to 0.4951 and the label to unsure. The shared mechanism is that edits can
+  move one or both heuristic signals, and averaging them can erase an AI-like
+  model score.
+- **Three prompt-injection attempts (PI01–PI03):** **Stages: the signals and
+  combining rule, followed by label mapping.** The instruction-like text was
+  included in the text being scored; it was not independently authenticated
+  or excluded. The resulting combined scores stayed below the AI threshold,
+  yielding human for PI01/PI02 and unsure for PI03. These are text-scoring
+  evasions rather than evidence of an instruction-following LLM being
+  hijacked.
+- **Eleven malformed-request attacks (MF02, RQ01, RQ03–RQ05, RQ07–RQ12):**
+  **Primary stage: route; secondary failure: signal one.** The route passed
+  missing, too-short, null, or non-string inputs through instead of rejecting
+  them with a client error. The model/tokenizer then raised exceptions that
+  escaped as 500 responses. RQ07 also shows the route assuming the decoded
+  JSON root is an object and calling `.get` on a list. The common mechanism is
+  missing request-shape/type validation and no conversion of these failures to
+  a controlled 4xx response.
 
-
+The evaluation blocker is the clearest shared problem: every request returned
+403, including valid writing. The recorded reports do not establish which
+component produced that response, so the next step is to identify and fix the
+request rejection before drawing conclusions about detector quality. The
+attack run does independently show signal/combining weaknesses and uncaught
+invalid-input errors. Criterion 4 remains untested.
 
 ---
 
