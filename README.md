@@ -658,5 +658,18 @@ change.
      ═════════════════════════════════════════════════════════════════════ -->
 
 ---
-
+## Capstone
+## What This Extends
+I am extending the existing Provenance Guard system, which scores submitted writing, records decisions in an audit log, and supports appeals. The new work focuses on reliable failure handling: validating submissions, responding clearly to rate limits and detector errors or timeouts, and testing that failures are handled and recorded correctly.
+## The Shape
+For the capstone, I am hardening Provenance Guard against failure by defining and testing predictable behavior for invalid or oversized submissions, rate limits, detector failures or timeouts, and appeals. The service should return clear responses and record the right audit events on these bad paths, so a failed request does not become an unexplained error or an unverified decision.
+### What is out of scope
+I'm not adding a new detector or retrieval strategy, and I'm not changing the existing scoring signals or thresholds. I'm also not redesigning the service or building a user interface; this capstone is focused on making the current system handle failures reliably.
+## Running the Project
+## Instrumentation
+## What it costs
+## Run logs and Verdicts
+## The Improvement
+## Whats Still Broken
+## How I used AI
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
