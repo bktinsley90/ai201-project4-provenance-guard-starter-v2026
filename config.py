@@ -45,6 +45,10 @@ DETECTOR_MODEL = os.getenv("AI201_DETECTOR_MODEL", "gpt2")
 # Longer text gives a steadier reading but takes longer. 400 tokens is roughly
 # 300 words, which is enough for the signal to mean something.
 DETECTOR_MAX_TOKENS = 400
+DETECTOR_TIMEOUT_SECONDS = 60
+MAX_TEXT_LENGTH = 10_000
+MAX_REQUEST_BYTES = 64_000
+MAX_APPEAL_REASONING_LENGTH = 5_000
 
 
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
@@ -76,8 +80,8 @@ AI_THRESHOLD = 0.65
 # them depends on the ranges produced by both signals.
 
 
-# ─── Rate limiting (UNIT 8) ──────────────────────────────────────────────────
-# Off in unit 7. You turn it on and choose the numbers in unit 8, Milestone 1.
+# ─── Rate limiting ───────────────────────────────────────────────────────────
+# Enable this to limit per-creator submissions and log every 429 rejection.
 #
 # Think about two people: a real writer submitting their own work a few times
 # an hour, and a script sending a thousand variations to map your thresholds.

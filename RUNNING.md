@@ -68,16 +68,17 @@ sent it data, it sent something back.
 `/ping` still answers: if it does, the problem is in your handler; if it
 doesn't, it's the service itself, and that's a help-channel question.
 
-Then try the route you're going to build:
+Then try a valid submission:
 
 ```bash
 curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "some writing", "creator_id": "me"}'
+  -d '{"text": "A sample with enough words to score.", "creator_id": "me"}'
 ```
 
-It returns a `501` saying it isn't built yet. **That's the correct starting
-position.**
+The service returns the decision, both signal scores, and a `content_id` that
+can be used to appeal. The model may take longer on the first request while it
+loads.
 
 ---
 
@@ -88,8 +89,8 @@ position.**
 | `POST /ping` | **works** | The example. Don't edit it |
 | `GET /health` | **works** | Is the service up, is the model loaded |
 | `GET /log` | **works** | The audit log, as JSON |
-| `POST /submit` | **you build it** | Milestones 3, 4, 5 |
-| `POST /appeal` | **you build it** | Milestone 5 |
+| `POST /submit` | **works** | Validate, rate-limit, and score writing; logs decisions and failures |
+| `POST /appeal` | **works** | Record one appeal for a completed decision |
 
 ---
 
@@ -105,6 +106,24 @@ position.**
 | `python run_attacks.py --set <folder>` | The attack set — **unit 8** |
 | `python run_attacks.py --flood 15` | Push past your rate limit and print the status codes — **unit 8** |
 | `python run_eval.py --label before` | Your five criteria, three trials — **unit 8** |
+| `python -m unittest discover -s tests -v` | Test validation, rate limits, detector failures/timeouts, and appeals |
+
+---
+
+## Capstone failure handling
+
+`POST /submit` accepts up to 10,000 text characters; request bodies are capped
+at 64 KB. Invalid input returns `400`, oversized input returns `413`, and rate
+limits return `429`. Detector failures return `503`; a detector that exceeds
+the 60-second response deadline returns `504`. If timed-out local inference is
+still running, further submissions receive `503` until it finishes. The model
+call runs in a worker thread and cannot be forcibly cancelled, so the service
+keeps at most one detector job active rather than queueing more work.
+
+Every rejected or failed submission is written to the audit log without
+creating a decision. Appeals are also validated and audited: an unknown
+submission returns `404`, a repeated appeal returns `409`, and a valid appeal
+adds an `under_review` event while preserving the original decision.
 
 ---
 
@@ -153,14 +172,12 @@ one signal. Then log it.
 
 ---
 
-## Turning on rate limiting (unit 8)
+## Rate limiting
 
-Three steps:
-
-1. In `config.py`, set `RATE_LIMITING_ENABLED = True` — or run with
-   `AI201_RATE_LIMITS=1`.
-2. Choose your numbers there.
-3. In `app.py`, uncomment the `@limiter.limit(...)` line above `submit`.
+Rate limiting is enabled by default: 10 submissions per minute and 200 per
+day per `creator_id`. Requests without a valid creator ID fall back to the
+caller's address. Change `RATE_LIMITING_ENABLED` or the two limit values in
+`config.py` to adjust the behavior.
 
 Then push past your limit and watch for `429`:
 
@@ -176,8 +193,8 @@ The attack set can't do this for you. Every attack row submits under its own
 `creator_id`, so a full attack run looks like forty-odd different callers and
 never trips a limit however long it is.
 
-No `429` at all? Either your limit is above 15 a minute, or rate limiting is
-still off. `GET /health` reports which.
+No `429` at all? Check the limit values and whether rate limiting is enabled;
+`GET /health` reports its status.
 
 Rejections are logged for you. **An attack that shows up only as an absence is
 one you'll never find** — a thousand requests that got a `429` and left no
@@ -279,7 +296,6 @@ sentences, a pasted quotation. That is very cheap to do on purpose.
 
 | What you see | What it means |
 |---|---|
-| `501 not_implemented` | Correct at the start — that's the TODO in `app.py` |
 | `404` from curl | Is the server running? Is the path exactly what you typed? |
 | `Cannot bind parameter 'Headers'` | You're in PowerShell, where `curl` is a different tool. Use `curl.exe`, on one line |
 | Request body arrives empty | curl needs `-H "Content-Type: application/json"` |
@@ -287,8 +303,12 @@ sentences, a pasted quotation. That is very cheap to do on purpose.
 | The first submission takes 10+ seconds | Signal one is loading the model into memory. Later ones take a second or two |
 | *Every* submission takes 10+ seconds | Something is reloading the model each call. `GET /health` shows `detector_loaded` — if it goes back to `false`, look for a reload in your handler |
 | `DetectorUnavailable` | Run `python detector.py` once to download the model |
-| `/appeal` seems to do nothing | Does the `content_id` you sent actually exist in the log? A typo there fails silently |
-| Every request gets through, no `429` ever | The decorator is uncommented but limiting is still off. Set `RATE_LIMITING_ENABLED` in `config.py` |
+| `400 invalid_request` | Check that the body is a JSON object and required fields have valid values |
+| `413` | The request body or text exceeds the configured size limit |
+| `429 rate_limited` | The caller reached the configured submission limit; the rejection is audited |
+| `503 detector_failed` or `detector_unavailable` | Check the server log and detector installation; no decision was recorded |
+| `504 detector_timeout` | The detector exceeded its deadline; retry after any ongoing inference finishes |
+| `/appeal` returns `404` or `409` | The content ID has no completed decision, or an appeal was already recorded |
 | Flask-Limiter warns about storage | Shouldn't happen — `storage_uri` is preconfigured. If you changed it, put it back |
 | All three of your labels never appear | Your ranges have a gap. `scoring.label_ranges()` prints them |
 

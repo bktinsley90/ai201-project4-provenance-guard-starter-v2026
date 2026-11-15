@@ -17,16 +17,24 @@ doesn't, it's the service itself.
 
 Routes:
 
-    POST /ping        the worked example. Already works. Don't edit it
-    POST /submit      ← YOU BUILD THIS (Milestone 3, 4, 5)
-    POST /appeal      ← YOU BUILD THIS (Milestone 5)
-    GET  /log         the audit log. Already works
-    GET  /health      is the service up, and is the model loaded
+    POST /ping        worked example
+    POST /submit      score text, with validation, rate limits, and failure handling
+    POST /appeal      record an appeal for a completed decision
+    GET  /log         inspect the audit log
+    GET  /health      check the service and detector status
 """
 
+import logging
+import threading
 import uuid
+from concurrent.futures import (
+    Future,
+    ThreadPoolExecutor,
+    TimeoutError as FutureTimeoutError,
+)
 
 from flask import Flask, jsonify, request
+from werkzeug.exceptions import RequestEntityTooLarge
 
 import audit
 import config
@@ -35,18 +43,77 @@ import scoring
 import stylometry
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = config.MAX_REQUEST_BYTES
+
+_logger = logging.getLogger(__name__)
+_detector_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="detector")
+_detector_lock = threading.Lock()
+_detector_future: Future[float] | None = None
+_appeal_lock = threading.Lock()
+
+
+class DetectorBusyError(RuntimeError):
+    """A previous detector call is still running after its request timed out."""
+
+
+class DetectorTimeoutError(TimeoutError):
+    """The detector did not finish before the configured request deadline."""
+
+
+class DetectorExecutionError(RuntimeError):
+    """The detector raised an exception while scoring a submission."""
+
+    def __init__(self, cause: Exception):
+        super().__init__(str(cause))
+        self.cause = cause
+
+
+def _run_detector(text: str) -> float:
+    try:
+        return detector.model_signal(text)
+    except Exception as exc:
+        raise DetectorExecutionError(exc) from exc
+
+
+def _log_late_detector_failure(future: Future[float]) -> None:
+    try:
+        future.result()
+    except DetectorExecutionError:
+        _logger.exception("Detector failed after its request timed out")
+
+
+def _model_score_with_timeout(text: str) -> float:
+    global _detector_future
+
+    with _detector_lock:
+        if _detector_future is not None and not _detector_future.done():
+            raise DetectorBusyError("A previous detector request is still running.")
+        future = _detector_executor.submit(_run_detector, text)
+        _detector_future = future
+
+    try:
+        return future.result(timeout=config.DETECTOR_TIMEOUT_SECONDS)
+    except FutureTimeoutError as exc:
+        future.add_done_callback(_log_late_detector_failure)
+        raise DetectorTimeoutError from exc
+    finally:
+        if future.done():
+            with _detector_lock:
+                if _detector_future is future:
+                    _detector_future = None
+
+
+def _json_object_from_request() -> dict | None:
+    try:
+        payload = request.get_json(silent=True)
+    except RequestEntityTooLarge:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 # ── Rate limiting — UNIT 8 ────────────────────────────────────────────────────
-# Off until you turn it on. In unit 8, Milestone 1:
-#
-#   1. Set RATE_LIMITING_ENABLED = True in config.py (or AI201_RATE_LIMITS=1)
-#   2. Choose your numbers there
-#   3. Uncomment the @limiter.limit(...) line on /submit below
-#
-# The order doesn't matter. While limiting is off, that decorator is a no-op
-# that quietly does nothing, so uncommenting it early costs you nothing — but
-# it also means no 429 until you've done step 1.
+# Rate limiting can be disabled with RATE_LIMITING_ENABLED=False in config.py.
+# When enabled, /submit is limited per creator_id, falling back to caller IP.
 #
 # The storage backend is preconfigured, which stops Flask-Limiter printing a
 # warning on every start. In-memory is right for one laptop and wrong for
@@ -72,19 +139,14 @@ if config.RATE_LIMITING_ENABLED:
 
     def rate_limit_key():
         """
-        Who a request counts against.
-
-        Falling back to the caller's address is the easy version. Unit 8's
-        stretch asks about per-creator limits instead — and the difference
-        matters: one script can look like a thousand callers, and one household
-        can look like one.
+        Count valid creator IDs separately and fall back to the caller address.
         """
-        payload = request.get_json(silent=True)
+        payload = _json_object_from_request()
         # A body that parses as JSON but isn't an object — a bare list or
         # string — has no .get. Without this guard the key function raises
         # BEFORE the route runs, and a malformed request becomes a 500 that
         # looks like your handler crashed when your handler never ran.
-        if not isinstance(payload, dict):
+        if payload is None:
             return get_remote_address()
         creator = payload.get("creator_id")
         return creator if isinstance(creator, str) and creator.strip() else get_remote_address()
@@ -103,11 +165,12 @@ if config.RATE_LIMITING_ENABLED:
 
         ⚠️ An attack that shows up only as an absence is one you'll never find.
         """
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = _json_object_from_request() or {}
+        creator_id = payload.get("creator_id")
+        if not isinstance(creator_id, str) or not creator_id.strip():
+            creator_id = "unknown"
         audit.log_rejection(
-            creator_id=payload.get("creator_id", "unknown"),
+            creator_id=creator_id,
             reason="rate_limited",
             limit=str(exc.description),
         )
@@ -116,6 +179,20 @@ if config.RATE_LIMITING_ENABLED:
             "message": "Too many submissions. Try again shortly.",
             "limit": str(exc.description),
         }), 429
+
+
+@app.errorhandler(413)
+def request_too_large(exc):
+    audit.log_rejection(
+        creator_id="unknown",
+        reason="request_too_large",
+        max_request_bytes=config.MAX_REQUEST_BYTES,
+        http_status=exc.code,
+    )
+    return jsonify({
+        "error": "request_too_large",
+        "message": f"Request body must not exceed {config.MAX_REQUEST_BYTES} bytes.",
+    }), 413
 
 
 # ── The worked example. Already works. Don't edit. ────────────────────────────
@@ -151,14 +228,13 @@ def health():
     })
 
 
-# ── YOU BUILD THIS ────────────────────────────────────────────────────────────
+# ── Submission route ──────────────────────────────────────────────────────────
 
 @app.post("/submit")
 @limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
 def submit():
     """
-    Take a piece of text, decide about it, log the decision, answer.
-    ← TODO — Milestones 3, 4 and 5
+    Take a piece of text, decide about it, log the decision, and answer.
 
     Expects JSON:
         {"text": "...", "creator_id": "..."}
@@ -249,10 +325,83 @@ def submit():
             "error": "invalid_request",
             "message": "text must contain at least three words to score.",
         }), 400
+    if len(text) > config.MAX_TEXT_LENGTH:
+        audit.log_rejection(
+            creator_id=audit_creator_id,
+            reason="text_too_large",
+            text_length=len(text),
+            max_text_length=config.MAX_TEXT_LENGTH,
+        )
+        return jsonify({
+            "error": "text_too_large",
+            "message": f"text must not exceed {config.MAX_TEXT_LENGTH} characters.",
+        }), 413
 
     content_id = str(uuid.uuid4())
-    model_score = detector.model_signal(text)
-    style_score = stylometry.style_signal(text)
+    try:
+        model_score = _model_score_with_timeout(text)
+    except DetectorBusyError:
+        audit.log_rejection(
+            creator_id=audit_creator_id,
+            reason="detector_busy",
+            content_id=content_id,
+        )
+        return jsonify({
+            "error": "detector_busy",
+            "message": "The detector is still processing another request. Try again shortly.",
+        }), 503
+    except DetectorTimeoutError:
+        _logger.warning(
+            "Detector timed out for content_id=%s after %s seconds",
+            content_id,
+            config.DETECTOR_TIMEOUT_SECONDS,
+        )
+        audit.log_rejection(
+            creator_id=audit_creator_id,
+            reason="detector_timeout",
+            content_id=content_id,
+            timeout_seconds=config.DETECTOR_TIMEOUT_SECONDS,
+        )
+        return jsonify({
+            "error": "detector_timeout",
+            "message": "The detector did not finish in time. Please try again.",
+        }), 504
+    except DetectorExecutionError as exc:
+        if isinstance(exc.cause, detector.DetectorUnavailable):
+            _logger.warning(
+                "Detector unavailable for content_id=%s: %s",
+                content_id,
+                exc.cause,
+            )
+            error = "detector_unavailable"
+            message = "The detector is unavailable. Please try again later."
+        else:
+            _logger.exception("Detector failed for content_id=%s", content_id)
+            error = "detector_failed"
+            message = "The detector could not score this submission. Please try again."
+        audit.log_rejection(
+            creator_id=audit_creator_id,
+            reason=error,
+            content_id=content_id,
+            error_type=type(exc.cause).__name__,
+        )
+        return jsonify({"error": error, "message": message}), 503
+
+    try:
+        style_score = stylometry.style_signal(text)
+    except Exception as exc:
+        _logger.exception("Style signal failed for content_id=%s", content_id)
+        audit.log_rejection(
+            creator_id=audit_creator_id,
+            reason="style_signal_failed",
+            content_id=content_id,
+            error_type=type(exc).__name__,
+        )
+        return jsonify({
+            "error": "style_signal_failed",
+            "message": "The detector could not score this submission. Please try again.",
+        }), 503
+
     combined_score = scoring.combine_signals(model_score, style_score)
     guess, label = scoring.score_to_label(combined_score)
 
@@ -281,25 +430,20 @@ def submit():
 @app.post("/appeal")
 def appeal():
     """
-    A writer says you got it wrong. ← TODO — Milestone 5
+    Record one appeal for a completed decision.
 
     Expects JSON:
         {"content_id": "...", "reasoning": "..."}
 
-    Should:
-      1. Check the content_id actually exists — `audit.entries_for(id)` tells
-         you. A typo here fails silently and looks like a broken endpoint,
-         which is the single most common way this milestone eats an hour.
-      2. Record the appeal with `audit.log_appeal(...)`, which moves the item
-         to `under_review`.
-      3. Confirm to the writer. No automatic re-checking needed.
-
-    This is the smallest endpoint in the project and the one that matters most
-    to the person on the other end. It's the only thing standing between a
-    wrong accusation and nothing at all.
+    Invalid, unknown, oversized, and duplicate appeals are rejected and logged.
     """
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
+        audit.log_rejection(
+            creator_id="unknown",
+            reason="invalid_appeal",
+            field="body",
+        )
         return jsonify({
             "error": "invalid_request",
             "message": "Request body must be a JSON object.",
@@ -308,32 +452,76 @@ def appeal():
     content_id = payload.get("content_id")
     reasoning = payload.get("reasoning")
     if not isinstance(content_id, str) or not content_id.strip():
+        audit.log_rejection(
+            creator_id="unknown",
+            reason="invalid_appeal",
+            field="content_id",
+        )
         return jsonify({
             "error": "invalid_request",
             "message": "A non-empty content_id is required.",
         }), 400
     if not isinstance(reasoning, str) or not reasoning.strip():
+        audit.log_rejection(
+            creator_id="unknown",
+            reason="invalid_appeal",
+            field="reasoning",
+            content_id=content_id,
+        )
         return jsonify({
             "error": "invalid_request",
             "message": "Non-empty reasoning is required.",
         }), 400
-
-    decisions = [
-        entry for entry in audit.entries_for(content_id)
-        if entry.get("event") != "appeal"
-    ]
-    if not decisions:
+    if len(reasoning) > config.MAX_APPEAL_REASONING_LENGTH:
+        audit.log_rejection(
+            creator_id="unknown",
+            reason="appeal_reasoning_too_large",
+            content_id=content_id,
+            reasoning_length=len(reasoning),
+            max_reasoning_length=config.MAX_APPEAL_REASONING_LENGTH,
+        )
         return jsonify({
-            "error": "not_found",
-            "message": "No submission found for that content_id.",
-        }), 404
+            "error": "appeal_reasoning_too_large",
+            "message": (
+                "reasoning must not exceed "
+                f"{config.MAX_APPEAL_REASONING_LENGTH} characters."
+            ),
+        }), 413
 
-    creator_id = decisions[0].get("creator_id", "unknown")
-    appeal_entry = audit.log_appeal(
-        content_id=content_id,
-        creator_id=creator_id,
-        reasoning=reasoning.strip(),
-    )
+    with _appeal_lock:
+        entries = audit.entries_for(content_id)
+        decisions = [
+            entry for entry in entries
+            if entry.get("status") == "decided"
+        ]
+        if not decisions:
+            audit.log_rejection(
+                creator_id="unknown",
+                reason="appeal_not_found",
+                content_id=content_id,
+            )
+            return jsonify({
+                "error": "not_found",
+                "message": "No submission found for that content_id.",
+            }), 404
+
+        creator_id = decisions[0].get("creator_id", "unknown")
+        if any(entry.get("event") == "appeal" for entry in entries):
+            audit.log_rejection(
+                creator_id=creator_id,
+                reason="duplicate_appeal",
+                content_id=content_id,
+            )
+            return jsonify({
+                "error": "already_under_review",
+                "message": "An appeal for this submission has already been recorded.",
+            }), 409
+
+        appeal_entry = audit.log_appeal(
+            content_id=content_id,
+            creator_id=creator_id,
+            reasoning=reasoning.strip(),
+        )
     return jsonify({
         "ok": True,
         "content_id": content_id,
@@ -362,7 +550,7 @@ def get_log():
 def main():
     print(f"Provenance Guard on http://{config.HOST}:{config.PORT}")
     print(f"  detector model:  {config.DETECTOR_MODEL}")
-    print(f"  rate limiting:   {'ON' if config.RATE_LIMITING_ENABLED else 'off (unit 8)'}")
+    print(f"  rate limiting:   {'ON' if config.RATE_LIMITING_ENABLED else 'OFF'}")
     print(f"  audit log:       {config.AUDIT_LOG}")
     print()
     print("Check it's alive:")
