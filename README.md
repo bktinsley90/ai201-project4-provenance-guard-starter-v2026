@@ -860,6 +860,21 @@ requests in the average, and the second is the rejected request:
 ```
 
 ## The Improvement
+
+I made rate-limit rejections more useful by adding a `Retry-After` response
+header. Previously, a `429` said only to try again shortly; now Flask-Limiter
+reports the remaining time in seconds for the limit that was exceeded. This
+matters because the service has both a per-minute and a per-day limit. Other
+limits may still apply after that wait, so clients should handle another `429`.
+The existing JSON response and rejection audit are preserved.
+
+I verified this with the local Flask test client and mocked detector: after ten
+successful submissions, the eleventh returned `429`; advancing a controlled
+clock by 15 seconds reduced `Retry-After` by 15 seconds. The test also filled
+the daily limit across separate minute windows, checked that its retry time
+exceeded 80,000 seconds, and confirmed a submission succeeded after the daily
+window expired. All 16 unit tests passed.
+
 ## Whats Still Broken
 ## How I used AI
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**

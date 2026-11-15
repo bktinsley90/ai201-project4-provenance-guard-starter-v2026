@@ -104,11 +104,49 @@ class FailureHandlingTests(unittest.TestCase):
 
         self.assertEqual([response.status_code for response in responses[:10]], [200] * 10)
         self.assertEqual(responses[10].status_code, 429)
+        retry_after = int(responses[10].headers["Retry-After"])
+        self.assertGreater(retry_after, 0)
+        self.assertLessEqual(retry_after, 61)
         self.assertEqual(responses[10].get_json()["error"], "rate_limited")
         self.assertTrue(any(
             entry.get("reason") == "rate_limited" and entry["creator_id"] == creator_id
             for entry in self.entries()
         ))
+
+    def test_retry_after_tracks_minute_and_daily_windows(self):
+        creator_id = f"retry-window-{time.time_ns()}"
+        start = 1_900_000_000.0
+        with (
+            patch.object(app.detector, "model_signal", return_value=0.2),
+            patch.object(app.stylometry, "style_signal", return_value=0.3),
+            patch("time.time", return_value=start) as clock,
+        ):
+            for _ in range(10):
+                self.assertEqual(self.submit(creator_id=creator_id).status_code, 200)
+            rejected = self.submit(creator_id=creator_id)
+            self.assertEqual(rejected.status_code, 429)
+            initial_wait = int(rejected.headers["Retry-After"])
+
+            clock.return_value = start + 15
+            rejected_later = self.submit(creator_id=creator_id)
+            self.assertEqual(rejected_later.status_code, 429)
+            self.assertEqual(int(rejected_later.headers["Retry-After"]), initial_wait - 15)
+
+            for minute in range(1, 20):
+                clock.return_value = start + minute * 61
+                for _ in range(10):
+                    self.assertEqual(self.submit(creator_id=creator_id).status_code, 200)
+
+            clock.return_value = start + 20 * 61
+            daily_rejection = self.submit(creator_id=creator_id)
+            self.assertEqual(daily_rejection.status_code, 429)
+            self.assertIn("200 per 1 day", daily_rejection.get_json()["limit"])
+            daily_wait = int(daily_rejection.headers["Retry-After"])
+            self.assertGreater(daily_wait, 80_000)
+            self.assertLessEqual(daily_wait, 86_400)
+
+            clock.return_value = start + 86_401
+            self.assertEqual(self.submit(creator_id=creator_id).status_code, 200)
 
     def test_detector_failure_returns_service_error_without_a_decision(self):
         with (

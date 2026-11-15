@@ -224,6 +224,8 @@ if config.RATE_LIMITING_ENABLED:
         app=app,
         storage_uri=config.RATE_LIMIT_STORAGE,
         default_limits=[],
+        headers_enabled=True,
+        retry_after="delta-seconds",
     )
 
     @app.errorhandler(429)
@@ -244,7 +246,7 @@ if config.RATE_LIMITING_ENABLED:
         )
         return jsonify({
             "error": "rate_limited",
-            "message": "Too many submissions. Try again shortly.",
+            "message": "Too many submissions. Wait for the Retry-After period before retrying.",
             "limit": str(exc.description),
         }), 429
 

@@ -173,6 +173,12 @@ still running, further submissions receive `503` until it finishes. The model
 call runs in a worker thread and cannot be forcibly cancelled, so the service
 keeps at most one detector job active rather than queueing more work.
 
+When rate limiting is enabled, responses from the limited endpoint include
+rate-limit headers. A `429` includes `Retry-After` in seconds for the breached
+limit; wait at least that long before retrying. Another limit may still be in
+effect, so handle a further `429` as well. The in-memory limits reset on
+restart and are not shared between processes.
+
 Every rejected or failed submission is written to the audit log without
 creating a decision. Appeals are also validated and audited: an unknown
 submission returns `404`, a repeated appeal returns `409`, and a valid appeal
