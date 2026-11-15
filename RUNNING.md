@@ -34,13 +34,39 @@ That downloads about 550 MB and scores a sample.
 
 ## Your first five minutes
 
-Two terminals. In the first:
+Activate the virtual environment, then run this from the repository root in
+the first terminal to start the service and save its console output to
+`logs/server.log`:
 
 ```bash
-python app.py
+mkdir -p logs && set -o pipefail && python app.py 2>&1 | tee -a logs/server.log
 ```
 
-In the second:
+On Windows PowerShell, use:
+
+```powershell
+New-Item -ItemType Directory -Force logs | Out-Null; python app.py 2>&1 | Tee-Object -FilePath logs/server.log -Append
+```
+
+The app writes a JSONL structured record for each HTTP request to
+`logs/requests.jsonl`, including its UTC timestamp, request ID, route, parsed
+input, JSON response (or response metadata), status, and duration in
+milliseconds. The decision/appeal audit trail remains separate in
+`logs/audit.jsonl`. Request records include submitted text and appeal
+reasoning, so keep these local logs private. Keep the service running, then
+use a second terminal to send a request:
+
+To read the structured log while the service is running:
+
+```bash
+tail -f logs/requests.jsonl
+```
+
+Each line is standalone JSON and can also be inspected with `jq`, for example:
+
+```bash
+tail -n 1 logs/requests.jsonl | jq
+```
 
 ```bash
 curl -X POST http://127.0.0.1:5000/ping \
@@ -106,7 +132,7 @@ loads.
 | `python run_attacks.py --set <folder>` | The attack set — **unit 8** |
 | `python run_attacks.py --flood 15` | Push past your rate limit and print the status codes — **unit 8** |
 | `python run_eval.py --label before` | Your five criteria, three trials — **unit 8** |
-| `python -m unittest discover -s tests -v` | Test validation, rate limits, detector failures/timeouts, and appeals |
+| `python -m unittest discover -s tests -v` | Test validation, rate limits, detector failures/timeouts, appeals, and structured request logs |
 
 ---
 
@@ -124,6 +150,11 @@ Every rejected or failed submission is written to the audit log without
 creating a decision. Appeals are also validated and audited: an unknown
 submission returns `404`, a repeated appeal returns `409`, and a valid appeal
 adds an `under_review` event while preserving the original decision.
+
+The separate `logs/requests.jsonl` captures each HTTP request's timestamp,
+input, output, duration, status, and request ID so response behavior can be
+reviewed after a run. It stores submitted text and appeal reasoning; treat this
+local file as private.
 
 ---
 

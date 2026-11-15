@@ -26,6 +26,7 @@ Routes:
 
 import logging
 import threading
+import time
 import uuid
 from concurrent.futures import (
     Future,
@@ -33,12 +34,15 @@ from concurrent.futures import (
     TimeoutError as FutureTimeoutError,
 )
 
-from flask import Flask, jsonify, request
+from datetime import datetime, timezone
+
+from flask import Flask, g, jsonify, request
 from werkzeug.exceptions import RequestEntityTooLarge
 
 import audit
 import config
 import detector
+import request_log
 import scoring
 import stylometry
 
@@ -50,6 +54,70 @@ _detector_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="detec
 _detector_lock = threading.Lock()
 _detector_future: Future[float] | None = None
 _appeal_lock = threading.Lock()
+
+
+def _request_input() -> object:
+    if not request.is_json:
+        return {
+            "content_type": request.content_type,
+            "content_length": request.content_length,
+        }
+    try:
+        return request.get_json(silent=True)
+    except RequestEntityTooLarge:
+        return {
+            "unavailable": "request_too_large",
+            "content_length": request.content_length,
+        }
+
+
+@app.before_request
+def start_request_record():
+    g.request_id = str(uuid.uuid4())
+    g.request_started_ns = time.perf_counter_ns()
+    g.request_input = _request_input()
+
+
+@app.after_request
+def write_request_record(response):
+    started_ns = getattr(g, "request_started_ns", time.perf_counter_ns())
+    request_input = getattr(g, "request_input", None)
+    creator_id = (
+        request_input.get("creator_id")
+        if isinstance(request_input, dict)
+        else None
+    )
+    output = (
+        response.get_json(silent=True)
+        if response.is_json
+        else {
+            "content_type": response.content_type,
+            "body_bytes": response.calculate_content_length(),
+        }
+    )
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+        "method": request.method,
+        "path": request.path,
+        "endpoint": request.endpoint,
+        "input": request_input,
+        "output": output,
+        "status_code": response.status_code,
+        "duration_ms": round((time.perf_counter_ns() - started_ns) / 1_000_000, 3),
+        "creator_id": creator_id,
+    }
+    if isinstance(output, dict) and output.get("content_id"):
+        record["content_id"] = output["content_id"]
+    response.headers["X-Request-ID"] = record["request_id"]
+    try:
+        request_log.append_record(config.REQUEST_LOG, record)
+    except OSError:
+        _logger.exception(
+            "Could not write structured request log for request_id=%s",
+            record["request_id"],
+        )
+    return response
 
 
 class DetectorBusyError(RuntimeError):

@@ -668,7 +668,48 @@ I'm not adding a new detector or retrieval strategy, and I'm not changing the ex
 ## Running the Project
 Run the failure-path tests with `python -m unittest discover -s tests -v`. They cover request validation and size limits, the configured rate limit, detector errors and timeouts, and the appeal flow. A detector timeout returns `504`; if the timed-out local inference is still running, additional submissions receive `503` until it finishes. Timed-out Python model work cannot be forcibly stopped, so this single-worker guard prevents new inference work from piling up behind it.
 ## Instrumentation
+Each HTTP request is recorded as one JSON object per line in
+`logs/requests.jsonl`, including timestamp, request ID, input, output, status,
+and duration. The existing decision and appeal audit trail remains in
+`logs/audit.jsonl`. Request logs contain submitted text and appeal reasoning;
+keep them private.
+
+**Measured local run — 2026-11-15 UTC.** I warmed the cached GPT-2 model with
+`detector.warm_up()`, then submitted the same valid text ten times through
+Flask's local test client with a distinct `creator_id` for each request. These
+are the ten successful structured request records from `logs/requests.jsonl`:
+
+```jsonl
+{"timestamp":"2026-11-15T01:35:18.457+00:00","request_id":"b8538856-c245-4801-ac79-ac114391d972","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-01","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"8ab54141-3bd2-49a7-859b-9c14a13075bd","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":553.406,"creator_id":"cost-measure-01","content_id":"8ab54141-3bd2-49a7-859b-9c14a13075bd"}
+{"timestamp":"2026-11-15T01:35:18.473+00:00","request_id":"a6342f9b-26b1-4301-b79e-e9e0a482f7b1","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-02","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"10cafe2f-e216-47d0-b86e-e11cc9677c4c","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":15.765,"creator_id":"cost-measure-02","content_id":"10cafe2f-e216-47d0-b86e-e11cc9677c4c"}
+{"timestamp":"2026-11-15T01:35:18.490+00:00","request_id":"8e0816f7-fea2-4ff4-a230-64f778c0fe0a","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-03","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"a323d1f6-7f41-4f2c-a3f0-4a544fee84c0","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":16.892,"creator_id":"cost-measure-03","content_id":"a323d1f6-7f41-4f2c-a3f0-4a544fee84c0"}
+{"timestamp":"2026-11-15T01:35:18.507+00:00","request_id":"2986a1cc-5cb7-4bfc-96d3-abb04573c91e","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-04","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"83b2adb2-f477-4f2e-a5e4-2421e7c161fc","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":16.618,"creator_id":"cost-measure-04","content_id":"83b2adb2-f477-4f2e-a5e4-2421e7c161fc"}
+{"timestamp":"2026-11-15T01:35:18.524+00:00","request_id":"6602cce7-7496-408c-bf5a-774e73b30e17","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-05","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"ffda52b5-acc0-4c04-b3d1-fb541069cd2a","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":16.341,"creator_id":"cost-measure-05","content_id":"ffda52b5-acc0-4c04-b3d1-fb541069cd2a"}
+{"timestamp":"2026-11-15T01:35:18.541+00:00","request_id":"c44b6a58-5a13-4a0e-8470-2bd779cfdf0c","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-06","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"75b52129-910e-4398-b49b-f9616a18b4bf","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":16.415,"creator_id":"cost-measure-06","content_id":"75b52129-910e-4398-b49b-f9616a18b4bf"}
+{"timestamp":"2026-11-15T01:35:18.557+00:00","request_id":"783a61d3-3b72-4f9f-b874-d1b4fbc3c71f","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-07","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"0167cd85-1237-4773-b025-9803f2c6ff0b","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":16.46,"creator_id":"cost-measure-07","content_id":"0167cd85-1237-4773-b025-9803f2c6ff0b"}
+{"timestamp":"2026-11-15T01:35:18.574+00:00","request_id":"c3b38afd-c328-4e08-a29b-a04c8b6f617f","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-08","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"ba33296e-e4a7-451c-a959-0fe152bba7c8","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":16.758,"creator_id":"cost-measure-08","content_id":"ba33296e-e4a7-451c-a959-0fe152bba7c8"}
+{"timestamp":"2026-11-15T01:35:18.591+00:00","request_id":"040d9f4b-c726-45e0-82da-65c41470749e","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-09","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"d0c1c2e2-aaa1-47a8-8145-3872907b1094","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":16.199,"creator_id":"cost-measure-09","content_id":"d0c1c2e2-aaa1-47a8-8145-3872907b1094"}
+{"timestamp":"2026-11-15T01:35:18.608+00:00","request_id":"d45b8ed4-5891-4588-abd6-44fc21d309ea","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-measure-10","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0.0,"content_id":"98eaf8b1-ce9f-40c6-bfaf-22f781c365d3","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":16.864,"creator_id":"cost-measure-10","content_id":"98eaf8b1-ce9f-40c6-bfaf-22f781c365d3"}
+```
+
+The rejected-input record from the same run (blank text, no model call):
+
+```json
+{"timestamp":"2026-11-15T01:35:18.608+00:00","request_id":"30b0b6d5-8a81-4c08-ac5c-16dbe9d3c9b1","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-failure","text":"  "},"output":{"error":"invalid_request","message":"text must be a non-empty string."},"status_code":400,"duration_ms":0.273,"creator_id":"cost-failure"}
+```
+
 ## What it costs
+One successful local `/submit` run cost **70.172 ms average server-side
+elapsed time** across the ten requests above. I computed this as
+`sum(duration_ms) / 10` from the exact records in `logs/requests.jsonl`:
+`(553.406 + 15.765 + 16.892 + 16.618 + 16.341 + 16.415 + 16.460 + 16.758 + 16.199 + 16.864) / 10 = 70.1718 ms`, rounded to `70.172 ms`.
+The cached GPT-2 model was loaded before measurement with
+`detector.warm_up()`; the first measured request still took 553.406 ms, while
+the other nine took about 16–17 ms, so the mean includes that first-request
+runtime overhead. These timings use the real local detector and Flask test
+client, measure from Flask's `before_request` to response construction, and
+exclude network transport and appending the request-log record. There is no
+external API charge; local compute time is the cost measured here.
 ## Run logs and Verdicts
 ## The Improvement
 ## Whats Still Broken

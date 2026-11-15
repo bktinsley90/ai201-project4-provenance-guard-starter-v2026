@@ -18,11 +18,14 @@ class FailureHandlingTests(unittest.TestCase):
         log_dir = Path(self.temp_dir.name)
         self.log_dir_patch = patch.object(config, "LOG_DIR", log_dir)
         self.audit_log_patch = patch.object(config, "AUDIT_LOG", log_dir / "audit.jsonl")
+        self.request_log_patch = patch.object(config, "REQUEST_LOG", log_dir / "requests.jsonl")
         self.log_dir_patch.start()
         self.audit_log_patch.start()
+        self.request_log_patch.start()
         self.client = app.app.test_client()
 
     def tearDown(self):
+        self.request_log_patch.stop()
         self.audit_log_patch.stop()
         self.log_dir_patch.stop()
         self.temp_dir.cleanup()
@@ -38,6 +41,27 @@ class FailureHandlingTests(unittest.TestCase):
             json.loads(line)
             for line in config.AUDIT_LOG.read_text(encoding="utf-8").splitlines()
         ] if config.AUDIT_LOG.exists() else []
+
+    def request_entries(self):
+        return [
+            json.loads(line)
+            for line in config.REQUEST_LOG.read_text(encoding="utf-8").splitlines()
+        ] if config.REQUEST_LOG.exists() else []
+
+    def test_request_log_records_input_output_status_and_duration(self):
+        payload = {"message": "structured hello"}
+        response = self.client.post("/ping", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        record = self.request_entries()[0]
+        self.assertEqual(record["method"], "POST")
+        self.assertEqual(record["path"], "/ping")
+        self.assertEqual(record["input"], payload)
+        self.assertEqual(record["output"], response.get_json())
+        self.assertEqual(record["status_code"], 200)
+        self.assertGreaterEqual(record["duration_ms"], 0)
+        self.assertEqual(record["request_id"], response.headers["X-Request-ID"])
+        self.assertTrue(record["timestamp"].endswith("+00:00"))
 
     def test_invalid_and_oversized_submissions_are_rejected_and_logged(self):
         with patch.object(app.detector, "model_signal") as model_signal:
@@ -65,6 +89,10 @@ class FailureHandlingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         self.assertEqual(response.get_json()["error"], "request_too_large")
         self.assertEqual(self.entries()[0]["reason"], "request_too_large")
+        request_record = self.request_entries()[0]
+        self.assertEqual(request_record["status_code"], 413)
+        self.assertEqual(request_record["input"]["unavailable"], "request_too_large")
+        self.assertEqual(request_record["output"]["error"], "request_too_large")
 
     def test_rate_limit_returns_json_and_audits_rejection(self):
         creator_id = f"rate-limit-{time.time_ns()}"
@@ -91,6 +119,9 @@ class FailureHandlingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.get_json()["error"], "detector_failed")
+        request_record = self.request_entries()[0]
+        self.assertEqual(request_record["output"]["error"], "detector_failed")
+        self.assertEqual(request_record["status_code"], 503)
         entries = self.entries()
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["reason"], "detector_failed")
