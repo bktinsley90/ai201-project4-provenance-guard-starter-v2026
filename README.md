@@ -703,7 +703,7 @@ The rejected-input record from the same run (blank text, no model call):
 {"timestamp":"2026-11-15T01:35:18.608+00:00","request_id":"30b0b6d5-8a81-4c08-ac5c-16dbe9d3c9b1","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"cost-failure","text":"  "},"output":{"error":"invalid_request","message":"text must be a non-empty string."},"status_code":400,"duration_ms":0.273,"creator_id":"cost-failure"}
 ```
 
-## What it costs
+## What It Costs
 One successful local `/submit` run cost **70.172 ms average server-side
 elapsed time** across the ten requests above. I computed this as
 `sum(duration_ms) / 10` from the exact records in `logs/requests.jsonl`:
@@ -715,6 +715,12 @@ runtime overhead. These timings use the real local detector and Flask test
 client, measure from Flask's `before_request` to response construction, and
 exclude network transport and appending the request-log record. There is no
 external API charge; local compute time is the cost measured here.
+
+For 100 people making one submission each per day, the measured average
+projects to `70.1718 ms × 100 = 7,017.18 ms`, or **about 7.02 seconds of
+total server-side elapsed time per day**; this is not a dollar estimate or
+a measure of CPU time.
+
 ## Run logs and Verdicts
 
 **Capstone evaluation — November 15, 2026, 02:09 UTC.** I ran
@@ -875,6 +881,42 @@ the daily limit across separate minute windows, checked that its retry time
 exceeded 80,000 seconds, and confirmed a submission succeeded after the daily
 window expired. All 16 unit tests passed.
 
-## Whats Still Broken
+## What's Still Broken
+
+All five original capstone targets were met in the three local trials, but
+criterion 5's target of logging only 11 requests per trial was too low to give
+much confidence in logging over a larger workload. I would tighten it to
+**110/110 requests logged per trial across three trials**, including 100
+successful submissions and 10 rejected inputs, each matched to its response
+by request ID and containing the required fields. This stricter target has
+not yet been tested; the existing results do not establish it.
+
+If this were a real service and I had another unit, I would first stop storing
+raw submission text and appeal reasoning in the logs while retaining the
+metadata needed for troubleshooting and audit. I would do that first because
+the current logs contain potentially private user writing and a leak could
+expose it.
+
 ## How I used AI
+
+**Moment 1**
+
+- *What I asked for:* Review the logs from three evaluation runs and update
+  the README with a MET or MISSED verdict for each capstone criterion.
+- *What came back:* AI compared the available logs with the criteria and found
+  that the original evaluation did not exercise several capstone failure
+  paths, so those criteria could not honestly be marked MET or MISSED.
+- *What I changed:* I kept those earlier results as historical evidence and
+  used the later capstone-specific evaluation to update the verdict table.
+
+**Moment 2**
+
+- *What I asked for:* Create a separate evaluation runner for the five
+  capstone criteria and provide a command to run it.
+- *What came back:* AI created `run_capstone_eval.py` to run three local
+  trials, exercise the failure paths, and save a verdict table and evidence.
+- *What I did next:* I ran the evaluation with the real local detector for
+  normal submissions and used its saved results to update the README. Detector
+  failures and timeouts were injected for the failure-path checks.
+
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
