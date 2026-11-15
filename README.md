@@ -667,6 +667,11 @@ For the capstone, I am hardening Provenance Guard against failure by defining an
 I'm not adding a new detector or retrieval strategy, and I'm not changing the existing scoring signals or thresholds. I'm also not redesigning the service or building a user interface; this capstone is focused on making the current system handle failures reliably.
 ## Running the Project
 Run the failure-path tests with `python -m unittest discover -s tests -v`. They cover request validation and size limits, the configured rate limit, detector errors and timeouts, and the appeal flow. A detector timeout returns `504`; if the timed-out local inference is still running, additional submissions receive `503` until it finishes. Timed-out Python model work cannot be forcibly stopped, so this single-worker guard prevents new inference work from piling up behind it.
+
+For all five capstone criteria over three trials, run
+`python run_capstone_eval.py`. The runner uses a local Flask test client and
+isolated temporary logs; it saves a verdict table and actual response and log
+evidence in `results/`. See [RUNNING.md](RUNNING.md) for details.
 ## Instrumentation
 Each HTTP request is recorded as one JSON object per line in
 `logs/requests.jsonl`, including timestamp, request ID, input, output, status,
@@ -711,6 +716,149 @@ client, measure from Flask's `before_request` to response construction, and
 exclude network transport and appending the request-log record. There is no
 external API charge; local compute time is the cost measured here.
 ## Run logs and Verdicts
+
+**Capstone evaluation — November 15, 2026, 02:09 UTC.** I ran
+`python run_capstone_eval.py`, which produced the
+[verdict report](results/capstone_2026-11-15_020923_837135_d54e89df.md) and
+[full response and log evidence](results/capstone_2026-11-15_020923_837135_d54e89df.json).
+The three trials used Flask's in-process test client, separate temporary logs,
+and fresh creator IDs. Valid submissions used the real local GPT-2 detector;
+the failure and timeout were deliberately injected, with the timeout shortened
+to 0.1 seconds for the test. This checks application behavior without testing
+network or deployed-server behavior.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Invalid and oversized submissions | 6/6 rejected and audited; no decisions | 6/6 | 6/6 | 6/6 | MET |
+| 2. Rate-limit boundary | 10 HTTP 200 responses, then an audited 429 within one minute | 10 × 200, then 429; 2.683 s | 10 × 200, then 429; 0.172 s | 10 × 200, then 429; 0.170 s | MET |
+| 3. Detector failure and timeout | Failure 503, timeout 504, busy 503; all audited without decisions | 503 / 504 / 503 | 503 / 504 / 503 | 503 / 504 / 503 | MET |
+| 4. Appeal handling | 3/3 appeals recorded; duplicate returns audited 409 | 3/3; duplicate passed | 3/3; duplicate passed | 3/3; duplicate passed | MET |
+| 5. Structured request logs | 10 successes and 1 rejection logged; calculate success average | 11/11; 16.304 ms | 11/11; 16.082 ms | 11/11; 16.204 ms | MET |
+
+The following are actual Run 1 responses and audit or request-log entries
+copied from the evidence file. The runner's `run_capstone_eval.py::send`
+captured the responses and records; the service functions that produced them
+are named below.
+
+**Criterion 1 — invalid and oversized submissions.** Responses came from
+`app.py::submit` and `app.py::request_too_large`; audit entries came from
+`audit.py::log_rejection`:
+
+```jsonl
+{"status":400,"output":{"error":"invalid_request","message":"text must be a non-empty string."},"audit_log":[{"timestamp":"2026-11-15T02:09:19+00:00","creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-missing","event":"rejected","status":"rejected","reason":"invalid_request","field":"text"}]}
+{"status":413,"output":{"error":"text_too_large","message":"text must not exceed 10000 characters."},"audit_log":[{"timestamp":"2026-11-15T02:09:19+00:00","creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-large","event":"rejected","status":"rejected","reason":"text_too_large","text_length":10005,"max_text_length":10000}]}
+{"status":413,"output":{"error":"request_too_large","message":"Request body must not exceed 64000 bytes."},"audit_log":[{"timestamp":"2026-11-15T02:09:19+00:00","creator_id":"unknown","event":"rejected","status":"rejected","reason":"request_too_large","max_request_bytes":64000,"http_status":413}]}
+```
+
+**Criterion 2 — rate limiting.** The 11th response and audit entry came from
+`app.py::rate_limited` and `audit.py::log_rejection`:
+
+```json
+{"status":429,"output":{"error":"rate_limited","limit":"10 per 1 minute","message":"Too many submissions. Try again shortly."},"audit_log":[{"timestamp":"2026-11-15T02:09:22+00:00","creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-rate","event":"rejected","status":"rejected","reason":"rate_limited","limit":"10 per 1 minute"}]}
+```
+
+**Criterion 3 — injected detector failure, timeout, and busy response.**
+`app.py::submit` returned each response and used `audit.py::log_rejection` to
+record it:
+
+```jsonl
+{"status":503,"output":{"error":"detector_failed","message":"The detector could not score this submission. Please try again."},"audit_log":[{"timestamp":"2026-11-15T02:09:22+00:00","creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-failure","event":"rejected","status":"rejected","reason":"detector_failed","content_id":"56e8530c-18ab-4e1e-b252-274bb8be7738","error_type":"RuntimeError"}]}
+{"status":504,"output":{"error":"detector_timeout","message":"The detector did not finish in time. Please try again."},"audit_log":[{"timestamp":"2026-11-15T02:09:22+00:00","creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-timeout","event":"rejected","status":"rejected","reason":"detector_timeout","content_id":"b0a1b6a5-e520-4f96-9e79-fc4328ddaaab","timeout_seconds":0.1}]}
+{"status":503,"output":{"error":"detector_busy","message":"The detector is still processing another request. Try again shortly."},"audit_log":[{"timestamp":"2026-11-15T02:09:22+00:00","creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-busy","event":"rejected","status":"rejected","reason":"detector_busy","content_id":"7a3c4b59-5d3c-4832-82a2-ffbd61fc36f1"}]}
+```
+
+**Criterion 4 — appeal and duplicate.** `app.py::appeal` returned the
+responses; `audit.py::log_appeal` and `audit.py::log_rejection` recorded them.
+The first entry is the original decision, recorded by `audit.py::log_decision`:
+
+```jsonl
+{"timestamp":"2026-11-15T02:09:22+00:00","content_id":"275453fb-c2ca-4ffb-968a-7d1514bc5081","creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-appeal-0","guess":"human","model_score":0.2561,"style_score":0.30486883669556775,"combined_score":0.28048441834778387,"label":"This text appears more consistent with human writing, though this assessment can be wrong.","status":"decided"}
+{"status":200,"output":{"content_id":"275453fb-c2ca-4ffb-968a-7d1514bc5081","message":"Your appeal has been recorded for review.","ok":true,"status":"under_review"},"audit_log":[{"timestamp":"2026-11-15T02:09:22+00:00","content_id":"275453fb-c2ca-4ffb-968a-7d1514bc5081","creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-appeal-0","event":"appeal","status":"under_review","reasoning":"Please review my writing and the original decision."}]}
+{"status":409,"output":{"error":"already_under_review","message":"An appeal for this submission has already been recorded."},"audit_log":[{"timestamp":"2026-11-15T02:09:22+00:00","creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-appeal-0","event":"rejected","status":"rejected","reason":"duplicate_appeal","content_id":"275453fb-c2ca-4ffb-968a-7d1514bc5081"}]}
+```
+
+**Criterion 5 — structured request logs.** These successful and rejected
+records were produced by `app.py::write_request_record` and
+`request_log.py::append_record`:
+
+```jsonl
+{"timestamp":"2026-11-15T02:09:22.654+00:00","request_id":"e8d10380-90b0-46a3-aa8b-bb65ba624a99","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-log-0","text":"Rain crossed the street. I waited beside the old station."},"output":{"combined_score":0.28048441834778387,"confidence":0,"content_id":"c84ca1fa-aa45-49eb-bb81-978e137dac32","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2561,"style_score":0.30486883669556775},"status_code":200,"duration_ms":16.3,"creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-log-0","content_id":"c84ca1fa-aa45-49eb-bb81-978e137dac32"}
+{"timestamp":"2026-11-15T02:09:22.806+00:00","request_id":"8c17c791-939f-46df-9636-85732d6c32a6","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-log-invalid","text":""},"output":{"error":"invalid_request","message":"text must be a non-empty string."},"status_code":400,"duration_ms":0.253,"creator_id":"capstone-2e4e7c46347045eeab09ab51f05e85e5-trial1-log-invalid"}
+```
+
+### Earlier evaluation — before the capstone runner
+
+The three evaluation invocations started at 01:52:04, 01:52:41, and 01:52:46
+UTC on November 15, 2026, as shown by their `/health` entries in
+`logs/requests.jsonl`. Each invocation contained three internal trials. The
+available report, `results/run_2026-11-14_2052_before.md`, contains the last
+invocation's results. The report filename has minute precision, so invocations
+in the same minute use the same filename.
+
+These are verdicts against the **capstone** criteria in `criteria.md`, not the
+original Unit 7 criteria. The existing `run_eval.py::main` sends the scenarios
+in `scenarios.py`, which do not cover all capstone failure cases or appeals.
+**NOT VERIFIED** means the required test or evidence was missing, not that it
+passed.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Invalid and oversized submissions | 6/6 rejected and audited; no decisions | 4/6 cases tested; 4/4 rejected and audited | 4/6 cases tested; 4/4 rejected and audited | 4/6 cases tested; 4/4 rejected and audited | NOT VERIFIED |
+| 2. Rate-limit boundary | 10 successful submissions, then 429 and rejection audit | Boundary sequence not tested | 429 observed; boundary sequence not tested | 429 observed; boundary sequence not tested | NOT VERIFIED |
+| 3. Detector failure and timeout | Injected failure 503, timeout 504, then busy 503; all audited without decisions | Not tested | Not tested | Not tested | NOT VERIFIED |
+| 4. Appeal handling | 3/3 appeals recorded; duplicate returns 409 and is audited | Not tested | Not tested | Not tested | NOT VERIFIED |
+| 5. Structured request logs | 10 successful and 1 rejected request each logged; calculate success average | 11/11 records; mean 417.333 ms | 11/11 records; mean 28.720 ms | 11/11 records; mean 25.825 ms | MET |
+
+For criterion 1, each invocation repeated the four malformed cases in three
+internal trials: all 12 requests per invocation returned 400, with 12 rejection
+events and no decision events for those test creator IDs. Neither the
+over-10,000-character text nor the over-64,000-byte body was tested by this
+evaluation. For criterion 5, I used the first ten HTTP 200 submissions and
+the first malformed-input rejection in each invocation; I checked their
+structured fields and averaged only the ten successful `duration_ms` values.
+Run 1's mean includes the model-loading first submission.
+
+**Criterion 1 — actual Run 1 output.** These request records were written by
+`app.py::write_request_record` through `request_log.py::append_record`; the
+rejection event was written by `app.py::submit` through
+`audit.py::log_rejection`:
+
+```jsonl
+{"timestamp":"2026-11-15T01:52:10.249+00:00","request_id":"56d942e1-edb9-411b-a6a2-4a9f6e8d9302","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"eval_bad_missing"},"output":{"error":"invalid_request","message":"text must be a non-empty string."},"status_code":400,"duration_ms":0.245,"creator_id":"eval_bad_missing"}
+{"timestamp":"2026-11-15T01:52:10.250+00:00","request_id":"11ae2e1c-cb3a-4e26-9829-a095d193b710","method":"POST","path":"/submit","endpoint":"submit","input":{"text":"","creator_id":"eval_bad_empty"},"output":{"error":"invalid_request","message":"text must be a non-empty string."},"status_code":400,"duration_ms":0.356,"creator_id":"eval_bad_empty"}
+{"timestamp":"2026-11-15T01:52:10.251+00:00","request_id":"3cf89180-8269-4919-b348-1294f91064ad","method":"POST","path":"/submit","endpoint":"submit","input":{"text":null,"creator_id":"eval_bad_null"},"output":{"error":"invalid_request","message":"text must be a non-empty string."},"status_code":400,"duration_ms":0.141,"creator_id":"eval_bad_null"}
+{"timestamp":"2026-11-15T01:52:10.252+00:00","request_id":"e61b07d4-4994-4850-b437-453306318f29","method":"POST","path":"/submit","endpoint":"submit","input":{"text":12345,"creator_id":"eval_bad_non_string"},"output":{"error":"invalid_request","message":"text must be a non-empty string."},"status_code":400,"duration_ms":0.182,"creator_id":"eval_bad_non_string"}
+{"timestamp":"2026-11-15T01:52:10+00:00","creator_id":"eval_bad_missing","event":"rejected","status":"rejected","reason":"invalid_request","field":"text"}
+```
+
+**Criterion 2 — partial Run 2 output.** This rejection event came from
+`app.py::rate_limited` and `audit.py::log_rejection` in `logs/audit.jsonl`:
+
+```json
+{"timestamp":"2026-11-15T01:52:43+00:00","creator_id":"eval_score spread_1","event":"rejected","status":"rejected","reason":"rate_limited","limit":"10 per 1 minute"}
+```
+
+This confirms a 429 rejection was audited, but does not establish the
+required fresh-window sequence of ten successes followed by a rejection.
+
+**Criterion 3 — no output available.** `run_eval.py::main` did not inject a
+detector error or timeout, so these runs produced no response or log entry for
+the required failure, timeout, or busy test.
+
+**Criterion 4 — no output available.** `run_eval.py::main` only sends requests
+to `/submit`; it did not call `app.py::appeal`. There is therefore no appeal
+response from these runs to paste.
+
+**Criterion 5 — actual Run 1 output.** These examples from
+`logs/requests.jsonl` were produced by `app.py::write_request_record` and
+`request_log.py::append_record`; the first is one of the ten successful
+requests in the average, and the second is the rejected request:
+
+```jsonl
+{"timestamp":"2026-11-15T01:52:08.233+00:00","request_id":"078c0476-4234-4382-8a55-6d0f361918e2","method":"POST","path":"/submit","endpoint":"submit","input":{"text":"Teriamisu is my favorite dessert of all time!","creator_id":"eval_my own writi_1"},"output":{"combined_score":0.228287037037037,"confidence":0,"content_id":"299fe54d-0279-4933-87c1-7bb2eee1e852","guess":"human","label":"This text appears more consistent with human writing, though this assessment can be wrong.","model_score":0.2825,"style_score":0.17407407407407408},"status_code":200,"duration_ms":3951.167,"creator_id":"eval_my own writi_1","content_id":"299fe54d-0279-4933-87c1-7bb2eee1e852"}
+{"timestamp":"2026-11-15T01:52:10.249+00:00","request_id":"56d942e1-edb9-411b-a6a2-4a9f6e8d9302","method":"POST","path":"/submit","endpoint":"submit","input":{"creator_id":"eval_bad_missing"},"output":{"error":"invalid_request","message":"text must be a non-empty string."},"status_code":400,"duration_ms":0.245,"creator_id":"eval_bad_missing"}
+```
+
 ## The Improvement
 ## Whats Still Broken
 ## How I used AI

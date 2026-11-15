@@ -132,7 +132,34 @@ loads.
 | `python run_attacks.py --set <folder>` | The attack set — **unit 8** |
 | `python run_attacks.py --flood 15` | Push past your rate limit and print the status codes — **unit 8** |
 | `python run_eval.py --label before` | Your five criteria, three trials — **unit 8** |
+| `python run_capstone_eval.py` | Run all five capstone criteria three times and save a summary and evidence |
 | `python -m unittest discover -s tests -v` | Test validation, rate limits, detector failures/timeouts, appeals, and structured request logs |
+
+---
+
+## Running the capstone evaluation
+
+Activate the virtual environment and run this command from the project root:
+
+```bash
+python run_capstone_eval.py
+```
+
+No separate server is needed: the runner uses Flask's in-process test client,
+the real local GPT-2 detector, and temporary isolated audit and request logs.
+It injects a detector failure and a short timeout only inside its own process;
+it does not alter a separately running server or the normal logs. Each of the
+three trials uses fresh creator IDs for rate limiting.
+Detector failure tracebacks and timeout warnings during the evaluation are
+expected: the runner deliberately triggers them to test the error paths. Check
+the final verdict table rather than treating those messages as a runner failure.
+
+The command prints the paths of a Markdown verdict table and a JSON evidence
+file in `results/`. The JSON contains the actual responses and log records
+needed to inspect each criterion. A `MET` verdict requires all three trials
+to pass; `MISSED` means at least one check failed, and the command exits with
+status 1. The first run may need to load the detector model. Since this uses a
+test client rather than a network server, it does not measure network latency.
 
 ---
 
